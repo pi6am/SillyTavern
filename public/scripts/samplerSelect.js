@@ -1,287 +1,207 @@
 import {
     main_api,
     saveSettingsDebounced,
-    novelai_setting_names,
-    callPopup,
-    settings,
 } from '../script.js';
-import { power_user } from './power-user.js';
 //import { BIAS_CACHE, displayLogitBias, getLogitBiasListResult } from './logit-bias.js';
 //import { getEventSourceStream } from './sse-stream.js';
 //import { getSortableDelay, onlyUnique } from './utils.js';
 //import { getCfgPrompt } from './cfg-scale.js';
-import { setting_names } from './textgen-settings.js';
+import { setting_names as TGsamplerNames, showTGSamplerControls, textgenerationwebui_settings } from './textgen-settings.js';
+import { renderTemplateAsync } from './templates.js';
+import { Popup, POPUP_TYPE } from './popup.js';
+import { localforage } from '../lib.js';
 
-
-const TGsamplerNames = setting_names;
-
-const forcedOnColoring = 'filter: sepia(1) hue-rotate(59deg) contrast(1.5) saturate(3.5)';
-const forcedOffColoring = 'filter: sepia(1) hue-rotate(308deg) contrast(0.7) saturate(10)';
-
-let userDisabledSamplers, userShownSamplers;
-
-/*
-
-for reference purposes:
-
-//NAI
-const nai_settings = {
-    temperature: 1.5,
-    repetition_penalty: 2.25,
-    repetition_penalty_range: 2048,
-    repetition_penalty_slope: 0.09,
-    repetition_penalty_frequency: 0,
-    repetition_penalty_presence: 0.005,
-    tail_free_sampling: 0.975,
-    top_k: 10,
-    top_p: 0.75,
-    top_a: 0.08,
-    typical_p: 0.975,
-    min_length: 1,
-    model_novel: 'clio-v1',
-    preset_settings_novel: 'Talker-Chat-Clio',
-    streaming_novel: false,
-    preamble: default_preamble,
-    prefix: '',
-    cfg_uc: '',
-    banned_tokens: '',
-    order: default_order,
-    logit_bias: [],
+const forcedOnColoring = 'color: #89db35;';
+const forcedOffColoring = 'color: #e84f62;';
+const SELECT_SAMPLER = {
+    DATA: 'selectsampler',
+    SHOWN: 'shown',
+    HIDDEN: 'hidden',
 };
 
-// TG Types
-export const textgen_types = {
-    OOBA: 'ooba',
-    MANCER: 'mancer',
-    VLLM: 'vllm',
-    APHRODITE: 'aphrodite',
-    TABBY: 'tabby',
-    KOBOLDCPP: 'koboldcpp',
-    TOGETHERAI: 'togetherai',
-    LLAMACPP: 'llamacpp',
-    OLLAMA: 'ollama',
-    INFERMATICAI: 'infermaticai',
-    DREAMGEN: 'dreamgen',
-    OPENROUTER: 'openrouter',
-};
-
-//KAI and TextGen
-const setting_names = [
-    'temp',
-    'temperature_last',
-    'rep_pen',
-    'rep_pen_range',
-    'no_repeat_ngram_size',
-    'top_k',
-    'top_p',
-    'top_a',
-    'tfs',
-    'epsilon_cutoff',
-    'eta_cutoff',
-    'typical_p',
-    'min_p',
-    'penalty_alpha',
-    'num_beams',
-    'length_penalty',
-    'min_length',
-    'dynatemp',
-    'min_temp',
-    'max_temp',
-    'dynatemp_exponent',
-    'smoothing_factor',
-    'smoothing_curve',
-    'max_tokens_second',
-    'encoder_rep_pen',
-    'freq_pen',
-    'presence_pen',
-    'do_sample',
-    'early_stopping',
-    'seed',
-    'add_bos_token',
-    'ban_eos_token',
-    'skip_special_tokens',
-    'streaming',
-    'mirostat_mode',
-    'mirostat_tau',
-    'mirostat_eta',
-    'guidance_scale',
-    'negative_prompt',
-    'grammar_string',
-    'json_schema',
-    'banned_tokens',
-    'legacy_api',
-    //'n_aphrodite',
-    //'best_of_aphrodite',
-    'ignore_eos_token',
-    'spaces_between_special_tokens',
-    //'logits_processors_aphrodite',
-    //'log_probs_aphrodite',
-    //'prompt_log_probs_aphrodite'
-    'sampler_order',
-    'sampler_priority',
-    'samplers',
-    'n',
-    'logit_bias',
-    'custom_model',
-    'bypass_status_check',
-];
-
-//OAI settings
-
-const default_settings = {
-    preset_settings_openai: 'Default',
-    temp_openai: 1.0,
-    freq_pen_openai: 0,
-    pres_pen_openai: 0,
-    count_pen: 0.0,
-    top_p_openai: 1.0,
-    top_k_openai: 0,
-    min_p_openai: 0,
-    top_a_openai: 1,
-    repetition_penalty_openai: 1,
-    stream_openai: false,
-    //...
-}
-
-
-*/
+const textGenObjectStore = localforage.createInstance({ name: 'SillyTavern_TextCompletions' });
+let selectedSamplers = {};
 
 // Goal 1: show popup with all samplers for active API
 async function showSamplerSelectPopup() {
-    const popup = $('#dialogue_popup');
-    popup.addClass('large_dialogue_popup');
     const html = $(document.createElement('div'));
     html.attr('id', 'sampler_view_list')
         .addClass('flex-container flexFlowColumn');
-    html.append(`
-    <div class="title_restorable flexFlowColumn alignItemsBaseline">
-        <div class="flex-container justifyCenter">
-            <h3>Sampler Select</h3>
-            <div class="flex-container alignItemsBaseline">
-            <div id="resetSelectedSamplers" class="menu_button menu_button_icon tag_view_create" title="Reset custom sampler selection">
-                <i class="fa-solid fa-recycle"></i>
-            </div>
-        </div>
-            <!--<div class="flex-container alignItemsBaseline">
-                <div class="menu_button menu_button_icon tag_view_create" title="Create a new sampler">
-                    <i class="fa-solid fa-plus"></i>
-                    <span data-i18n="Create">Create</span>
-                </div>
-            </div>-->
-        </div>
-        <small>Here you can toggle the display of individual samplers. (WIP)</small>
-    </div>
-    <hr>`);
+    html.append(await renderTemplateAsync('samplerSelector'));
 
     const listContainer = $('<div id="apiSamplersList" class="flex-container flexNoGap"></div>');
     const APISamplers = await listSamplers(main_api);
-    listContainer.append(APISamplers);
+    listContainer.append(APISamplers.toString());
     html.append(listContainer);
 
-    callPopup(html, 'text', null, { allowVerticalScrolling: true });
+    const showPromise = new Popup(html, POPUP_TYPE.TEXT, null, { wide: true, large: true, allowVerticalScrolling: true }).show();
 
     setSamplerListListeners();
 
     $('#resetSelectedSamplers').off('click').on('click', async function () {
         console.log('saw sampler select reset click');
-        userDisabledSamplers = [];
-        userShownSamplers = [];
-        power_user.selectSamplers.forceShown = [];
-        power_user.selectSamplers.forceHidden = [];
+
+        if (main_api === 'textgenerationwebui') {
+            $('#prioritizeManuallySelectedSamplers').toggleClass('toggleEnabled', false);
+            await resetApiSelectedSamplers(null, true);
+        }
+
         await validateDisabledSamplers(true);
     });
+
+    if (main_api === 'textgenerationwebui') {
+        $('#prioritizeManuallySelectedSamplers').show();
+        $('#prioritizeManuallySelectedSamplers').toggleClass('toggleEnabled', isSamplerManualPriorityEnabled());
+        $('#prioritizeManuallySelectedSamplers').off('click').on('click', function () {
+            $(this).toggleClass('toggleEnabled');
+
+            const isActive = $(this).hasClass('toggleEnabled');
+
+            toggleSamplerManualPriority(isActive);
+        });
+    } else {
+        $('#prioritizeManuallySelectedSamplers').hide();
+        $('#prioritizeManuallySelectedSamplers').off('click');
+    }
+
+    await showPromise;
+    if (main_api === 'textgenerationwebui') await saveApiSelectedSamplers();
+}
+
+function getRelatedDOMElement(samplerName) {
+    let relatedDOMElement = $(`#${samplerName}_${main_api}`).parent();
+    let targetDisplayType = 'flex';
+    let displayname;
+
+    if (samplerName === 'json_schema') {
+        relatedDOMElement = $('#json_schema_block');
+        targetDisplayType = 'block';
+        displayname = 'JSON Schema Block';
+    }
+
+    if (samplerName === 'grammar_string') {
+        relatedDOMElement = $('#grammar_block_ooba');
+        targetDisplayType = 'block';
+        displayname = 'Grammar Block';
+    }
+
+    if (samplerName === 'guidance_scale') {
+        relatedDOMElement = $('#cfg_block_ooba');
+        targetDisplayType = 'block';
+        displayname = 'CFG Block';
+    }
+
+    if (samplerName === 'mirostat_mode') {
+        relatedDOMElement = $('#mirostat_block_ooba');
+        targetDisplayType = 'block';
+        displayname = 'Mirostat Block';
+    }
+
+    if (samplerName === 'dry_multiplier') {
+        relatedDOMElement = $('#dryBlock');
+        targetDisplayType = 'block';
+        displayname = 'DRY Rep Pen Block';
+    }
+
+    if (samplerName === 'xtc_probability') {
+        relatedDOMElement = $('#xtc_block');
+        targetDisplayType = 'block';
+        displayname = 'XTC Block';
+    }
+
+    if (samplerName === 'dynatemp') {
+        relatedDOMElement = $('#dynatemp_block_ooba');
+        targetDisplayType = 'block';
+        displayname = 'DynaTemp Block';
+    }
+
+    if (samplerName === 'banned_tokens') {
+        relatedDOMElement = $('#banned_tokens_block_ooba');
+        targetDisplayType = 'block';
+    }
+
+    if (samplerName === 'sampler_order') { //this is for kcpp sampler order
+        relatedDOMElement = $('#sampler_order_block_kcpp');
+        displayname = 'KCPP Sampler Order Block';
+    }
+
+    if (samplerName === 'samplers') { //this is for lcpp sampler order
+        relatedDOMElement = $('#sampler_order_block_lcpp');
+        displayname = 'LCPP Sampler Order Block';
+    }
+
+    if (samplerName === 'sampler_priority') { //this is for ooba's sampler priority
+        relatedDOMElement = $('#sampler_priority_block_ooba');
+        displayname = 'Ooba Sampler Priority Block';
+    }
+
+    if (samplerName === 'samplers_priorities') { //this is for aphrodite's sampler priority
+        relatedDOMElement = $('#sampler_priority_block_aphrodite');
+        displayname = 'Aphrodite Sampler Priority Block';
+    }
+
+    if (samplerName === 'penalty_alpha') { //contrastive search only has one sampler, does it need its own block?
+        relatedDOMElement = $('#contrastiveSearchBlock');
+        displayname = 'Contrast Search Block';
+    }
+
+    if (samplerName === 'num_beams') { // num_beams is the killswitch for Beam Search
+        relatedDOMElement = $('#beamSearchBlock');
+        targetDisplayType = 'block';
+        displayname = 'Beam Search Block';
+    }
+
+    if (samplerName === 'smoothing_factor') { // num_beams is the killswitch for Beam Search
+        relatedDOMElement = $('#smoothingBlock');
+        targetDisplayType = 'block';
+        displayname = 'Smoothing Block';
+    }
+
+    return { relatedDOMElement, targetDisplayType, displayname };
 }
 
 function setSamplerListListeners() {
     // Goal 2: hide unchecked samplers from DOM
     let listContainer = $('#apiSamplersList');
     listContainer.find('input').off('change').on('change', async function () {
-
         const samplerName = this.name.replace('_checkbox', '');
-        let relatedDOMElement = $(`#${samplerName}_${main_api}`).parent();
-        let targetDisplayType = 'flex';
-
-        if (samplerName === 'json_schema') {
-            relatedDOMElement = $('#json_schema_block');
-            targetDisplayType = 'block';
-        }
-
-        if (samplerName === 'grammar_string') {
-            relatedDOMElement = $('#grammar_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (samplerName === 'guidance_scale') {
-            relatedDOMElement = $('#cfg_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (samplerName === 'mirostat_mode') {
-            relatedDOMElement = $('#mirostat_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (samplerName === 'dynatemp') {
-            relatedDOMElement = $('#dynatemp_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (samplerName === 'banned_tokens') {
-            relatedDOMElement = $('#banned_tokens_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (samplerName === 'sampler_order') {
-            relatedDOMElement = $('#sampler_order_block');
-            targetDisplayType = 'flex';
-        }
+        const { relatedDOMElement, targetDisplayType } = getRelatedDOMElement(samplerName);
 
         // Get the current state of the custom data attribute
-        const previousState = relatedDOMElement.data('selectsampler');
+        const previousState = relatedDOMElement.data(SELECT_SAMPLER.DATA);
+        const isChecked = $(this).prop('checked');
+        const popupInputLabel = $(this).parent().find('.sampler_name');
 
-        if ($(this).prop('checked') === false) {
-            //console.log('saw clicking checkbox from on to off...');
-            if (previousState === 'shown') {
-                console.log('saw previously custom shown sampler');
-                //console.log('removing from custom force show list');
-                relatedDOMElement.removeData('selectsampler');
-                $(this).parent().find('.sampler_name').removeAttr('style');
-                power_user?.selectSamplers?.forceShown.splice(power_user?.selectSamplers?.forceShown.indexOf(samplerName), 1);
-                console.log(power_user?.selectSamplers?.forceShown);
+        if (isChecked === false) {
+            if (previousState === SELECT_SAMPLER.SHOWN) {
+                console.log('saw previously custom shown sampler => new state:', isChecked, samplerName);
+                relatedDOMElement.removeData(SELECT_SAMPLER.DATA);
+                popupInputLabel.removeAttr('style');
             } else {
-                console.log('saw previous untouched sampler');
-                //console.log(`adding ${samplerName} to force hide list`);
-                relatedDOMElement.data('selectsampler', 'hidden');
-                console.log(relatedDOMElement.data('selectsampler'));
-                power_user.selectSamplers.forceHidden.push(samplerName);
-                $(this).parent().find('.sampler_name').attr('style', forcedOffColoring);
-                console.log(power_user.selectSamplers.forceHidden);
+                console.log('saw previous untouched sampler => new state:', isChecked, samplerName);
+                relatedDOMElement.data(SELECT_SAMPLER.DATA, SELECT_SAMPLER.HIDDEN);
+                popupInputLabel.attr('style', forcedOffColoring);
             }
-        } else { // going from unchecked to checked
-            //console.log('saw clicking checkbox from off to on...');
-            if (previousState === 'hidden') {
-                console.log('saw previously custom hidden sampler');
-                //console.log('removing from custom force hide list');
-                relatedDOMElement.removeData('selectsampler');
-                $(this).parent().find('.sampler_name').removeAttr('style');
-                power_user?.selectSamplers?.forceHidden.splice(power_user?.selectSamplers?.forceHidden.indexOf(samplerName), 1);
-                console.log(power_user?.selectSamplers?.forceHidden);
+        } else {
+            if (previousState === SELECT_SAMPLER.HIDDEN) {
+                console.log('saw previously custom hidden sampler => new state:', isChecked, samplerName);
+                relatedDOMElement.removeData(SELECT_SAMPLER.DATA);
+                popupInputLabel.removeAttr('style');
             } else {
-                console.log('saw previous untouched sampler');
-                //console.log(`adding ${samplerName} to force shown list`);
-                relatedDOMElement.data('selectsampler', 'shown');
-                console.log(relatedDOMElement.data('selectsampler'));
-                power_user.selectSamplers.forceShown.push(samplerName);
-                $(this).parent().find('.sampler_name').attr('style', forcedOnColoring);
-                console.log(power_user.selectSamplers.forceShown);
+                console.log('saw previous untouched sampler => new state:', isChecked, samplerName);
+                relatedDOMElement.data(SELECT_SAMPLER.DATA, SELECT_SAMPLER.SHOWN);
+                popupInputLabel.attr('style', forcedOnColoring);
             }
         }
+
         await saveSettingsDebounced();
 
-        const shouldDisplay = $(this).prop('checked') ? targetDisplayType : 'none';
+        const shouldDisplay = isChecked ? targetDisplayType : 'none';
         relatedDOMElement.css('display', shouldDisplay);
 
-        console.log(samplerName, relatedDOMElement.data('selectsampler'), shouldDisplay);
+        if (main_api === 'textgenerationwebui') setApiSamplersState(samplerName, shouldDisplay !== 'none');
+
+        console.log(samplerName, relatedDOMElement.data(SELECT_SAMPLER.DATA), shouldDisplay);
     });
 
 }
@@ -301,7 +221,7 @@ async function listSamplers(main_api, arrayOnly = false) {
     let availableSamplers;
     if (main_api === 'textgenerationwebui') {
         availableSamplers = TGsamplerNames;
-        const valuesToRemove = new Set(['streaming', 'seed', 'bypass_status_check', 'custom_model', 'legacy_api', 'samplers']);
+        const valuesToRemove = new Set(['streaming', 'bypass_status_check', 'custom_model', 'legacy_api']);
         availableSamplers = availableSamplers.filter(sampler => !valuesToRemove.has(sampler));
         availableSamplers.sort();
     }
@@ -311,37 +231,42 @@ async function listSamplers(main_api, arrayOnly = false) {
         return availableSamplers;
     }
 
+    const samplersActivatedManually = (main_api === 'textgenerationwebui') ? getActiveManualApiSamplers() : [];
+    const prioritizeManualSamplerSelect = (main_api === 'textgenerationwebui') ? isSamplerManualPriorityEnabled() : false;
+
     const samplersListHTML = availableSamplers.reduce((html, sampler) => {
         let customColor;
-        const targetDOMelement = $(`#${sampler}_${main_api}`);
+        let { relatedDOMElement, displayname } = getRelatedDOMElement(sampler);
 
-        const isInForceHiddenArray = userDisabledSamplers.includes(sampler);
-        const isInForceShownArray = userShownSamplers.includes(sampler);
-        let isVisibleInDOM = isElementVisibleInDOM(targetDOMelement[0]);
-        const isInDefaultState = () => {
-            if (isVisibleInDOM && isInForceShownArray) { return false; }
-            else if (!isVisibleInDOM && isInForceHiddenArray) { return false; }
-            else { return true; }
-        };
+        const isManuallyActivated = samplersActivatedManually.includes(sampler);
+        const displayModified = relatedDOMElement.data(SELECT_SAMPLER.DATA);
+        const isInDefaultState = !displayModified;
 
         const shouldBeChecked = () => {
-            if (isInForceHiddenArray) {
-                customColor = forcedOffColoring;
-                return false;
+            let finalState = isElementVisibleInDOM(relatedDOMElement[0]);
+
+            if (prioritizeManualSamplerSelect) {
+                finalState = isManuallyActivated;
             }
-            else if (isInForceShownArray) {
-                customColor = forcedOnColoring;
-                return true;
+
+            else if (!isInDefaultState) {
+                finalState = displayModified === SELECT_SAMPLER.SHOWN;
+                customColor = finalState ? forcedOnColoring : forcedOffColoring;
             }
-            else { return isVisibleInDOM; }
+
+            return finalState;
         };
-        console.log(sampler, isInDefaultState(), isInForceHiddenArray, shouldBeChecked());
+
+        console.log(sampler, relatedDOMElement.prop('id'), isInDefaultState, shouldBeChecked());
+
+        if (displayname === undefined) displayname = sampler;
+        if (main_api === 'textgenerationwebui') setApiSamplersState(sampler, shouldBeChecked());
+
         return html + `
-        <div class="sampler_view_list_item wide50p flex-container">
+        <label class="sampler_view_list_item wide50p flex-container">
             <input type="checkbox" name="${sampler}_checkbox" ${shouldBeChecked() ? 'checked' : ''}>
-            <small class="sampler_name" style="${customColor}">${sampler}</small>
-        </div>
-        `;
+            <small class="sampler_name" style="${customColor}">${displayname}</small>
+        </label>`;
     }, '');
 
     return samplersListHTML;
@@ -357,82 +282,164 @@ export async function validateDisabledSamplers(redraw = false) {
         return;
     }
 
+    const samplersActivatedManually = (main_api === 'textgenerationwebui') ? getActiveManualApiSamplers() : [];
+    const prioritizeManualSamplerSelect = (main_api === 'textgenerationwebui') ? isSamplerManualPriorityEnabled() : false;
+
     for (const sampler of APISamplers) {
-        let relatedDOMElement = $(`#${sampler}_${main_api}`).parent();
-        let targetDisplayType = 'flex';
+        const { relatedDOMElement, targetDisplayType } = getRelatedDOMElement(sampler);
 
-        if (sampler === 'json_schema') {
-            relatedDOMElement = $('#json_schema_block');
-            targetDisplayType = 'block';
-        }
-
-        if (sampler === 'grammar_string') {
-            relatedDOMElement = $('#grammar_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (sampler === 'guidance_scale') {
-            relatedDOMElement = $('#cfg_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (sampler === 'mirostat_mode') {
-            relatedDOMElement = $('#mirostat_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (sampler === 'dynatemp') {
-            relatedDOMElement = $('#dynatemp_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (sampler === 'banned_tokens') {
-            relatedDOMElement = $('#banned_tokens_block_ooba');
-            targetDisplayType = 'block';
-        }
-
-        if (sampler === 'sampler_order') {
-            relatedDOMElement = $('#sampler_order_block');
-        }
-
-        if (power_user?.selectSamplers?.forceHidden.includes(sampler)) {
-            //default handling for standard sliders
-            relatedDOMElement.data('selectsampler', 'hidden');
-            relatedDOMElement.css('display', 'none');
-        } else if (power_user?.selectSamplers?.forceShown.includes(sampler)) {
-            relatedDOMElement.data('selectsampler', 'shown');
-            relatedDOMElement.css('display', targetDisplayType);
+        if (prioritizeManualSamplerSelect) {
+            const isManuallyActivated = samplersActivatedManually.includes(sampler);
+            relatedDOMElement.css('display', isManuallyActivated ? targetDisplayType : 'none');
         } else {
-            if (relatedDOMElement.data('selectsampler') === 'hidden') {
-                relatedDOMElement.removeAttr('selectsampler');
-                relatedDOMElement.css('display', targetDisplayType);
-            }
-            if (relatedDOMElement.data('selectsampler') === 'shown') {
-                relatedDOMElement.removeAttr('selectsampler');
-                relatedDOMElement.css('display', 'none');
-            }
-        }
-        if (redraw) {
-            let samplersHTML = await listSamplers(main_api);
-            $('#apiSamplersList').empty().append(samplersHTML);
-            setSamplerListListeners();
+            const selectSamplerData = relatedDOMElement.data(SELECT_SAMPLER.DATA);
+            relatedDOMElement.css('display', selectSamplerData === SELECT_SAMPLER.SHOWN ? targetDisplayType : 'none');
         }
 
+        relatedDOMElement.removeData(SELECT_SAMPLER.DATA);
+    }
 
+    if (!prioritizeManualSamplerSelect && main_api === 'textgenerationwebui') {
+        showTGSamplerControls();
+    }
+
+    if (redraw) {
+        let samplersHTML = await listSamplers(main_api);
+        $('#apiSamplersList').empty().append(samplersHTML.toString());
+        setSamplerListListeners();
+    }
+
+    await saveSettingsDebounced();
+}
+
+/**
+ * Initializes the configuration object for manually selected samplers.
+ * @returns void
+ */
+export async function loadApiSelectedSamplers() {
+    try {
+        console.debug('Text Completions: loading selected samplers');
+        selectedSamplers = await textGenObjectStore.getItem('selectedSamplers') || {};
+    } catch (error) {
+        console.log('Text Completions: unable to load selected samplers, using default samplers', error);
+        selectedSamplers = {};
     }
 }
 
+/**
+ * Synchronizes the local forage instance with the selected samplers configuration object.
+ * @returns void
+ */
+export async function saveApiSelectedSamplers() {
+    try {
+        console.debug('Text Completions: saving selected samplers');
+        await textGenObjectStore.setItem('selectedSamplers', selectedSamplers);
+    } catch (error) {
+        console.log('Text Completions: unable to save selected samplers', error);
+    }
+}
+
+/**
+ * Resets the selected samplers configuration object from the local forage instance.
+ * @param {string?} tcApiType Name of the target API Type - It picks the currently active TC API type name by default
+ * @param {boolean} silent Suppresses the toastr message confirming that the data was deleted.
+ * @returns void
+ */
+export async function resetApiSelectedSamplers(tcApiType = '', silent = false) {
+    try {
+        if (!textgenerationwebui_settings?.type && !tcApiType) return;
+        if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
+        if (!selectedSamplers[tcApiType]) return;
+
+        console.debug('Text Completions: resetting selected samplers');
+        delete selectedSamplers[tcApiType];
+        await saveApiSelectedSamplers();
+        if (!silent) toastr.success('Selected samplers cleared.');
+    } catch (error) {
+        console.log('Text Completions: unable to reset selected preset samplers', error);
+    }
+}
+
+/**
+ * Saves the visibility state for selected samplers into the configuration object.
+ * @param {string} samplerName Target sampler key name
+ * @param {string|boolean} state Visibility state of the target sampler
+ * @param {string?} tcApiType Name of the target API Type - It picks the currently active TC API type name by default
+ * @returns void
+ */
+export function setApiSamplersState(samplerName, state, tcApiType = '') {
+    if (!textgenerationwebui_settings?.type && !tcApiType) return;
+    if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
+    if (!selectedSamplers[tcApiType]) selectedSamplers[tcApiType] = {};
+
+    const presetSamplers = selectedSamplers[tcApiType];
+    presetSamplers[samplerName] = String(state) === 'true';
+}
+
+/**
+ * Returns the local forage object belonging to the active/selected TC API Type
+ * @param {string?} tcApiType Name of the target API Type - It picks the currently active TC API type name by default
+ * @returns {object} Full localforage object with manual selections
+ */
+export function getAllManualApiSamplers(tcApiType = '') {
+    if (!textgenerationwebui_settings?.type && !tcApiType) return {};
+    if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
+    if (!selectedSamplers[tcApiType]) selectedSamplers[tcApiType] = {};
+
+    return selectedSamplers[tcApiType];
+}
+
+/**
+ * Returns the key names of all the manually activated API Type samplers.
+ * @param {string?} tcApiType Name of the target API Type - It picks the currently active TC API type name by default
+ * @returns {string[]} Array of sampler key names
+ */
+export function getActiveManualApiSamplers(tcApiType = '') {
+    if (!textgenerationwebui_settings?.type && !tcApiType) return [];
+    if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
+    if (!selectedSamplers[tcApiType]) selectedSamplers[tcApiType] = {};
+
+    try {
+        const presetSamplers = Object.entries(selectedSamplers[tcApiType]);
+
+        return presetSamplers
+            .filter(([key, val]) => val === true && key !== 'st_manual_priority')
+            .map(([key, val]) => key);
+    } catch (error) {
+        console.log('Text Completions: unable to fetch active preset samplers', error);
+        return [];
+    }
+}
+
+/**
+ * @param {string|boolean} state Target state of the feature
+ * @param {string?} tcApiType Name of the target API Type - It picks the currently active TC API type name by default
+ * @returns void
+ */
+export function toggleSamplerManualPriority(state = false, tcApiType = '') {
+    if (!textgenerationwebui_settings?.type && !tcApiType) return;
+    if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
+    if (!selectedSamplers[tcApiType]) selectedSamplers[tcApiType] = {};
+
+    const presetSamplers = selectedSamplers[tcApiType];
+    presetSamplers.st_manual_priority = String(state) === 'true';
+}
+
+/**
+ * @param {string?} tcApiType Name of the target API Type - It picks the currently active TC API type name by default
+ * @returns {boolean}
+ */
+export function isSamplerManualPriorityEnabled(tcApiType = '') {
+    if (!textgenerationwebui_settings?.type && !tcApiType) return false;
+    if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
+    if (!selectedSamplers[tcApiType]) selectedSamplers[tcApiType] = {};
+
+    return selectedSamplers[tcApiType]?.st_manual_priority ?? false;
+}
 
 export async function initCustomSelectedSamplers() {
-
-    userDisabledSamplers = power_user?.selectSamplers?.forceHidden || [];
-    userShownSamplers = power_user?.selectSamplers?.forceShown || [];
-    power_user.selectSamplers = {};
-    power_user.selectSamplers.forceHidden = userDisabledSamplers;
-    power_user.selectSamplers.forceShown = userShownSamplers;
     await saveSettingsDebounced();
     $('#samplerSelectButton').off('click').on('click', showSamplerSelectPopup);
-
 }
 
 // Goal 4: filter hidden samplers from API output

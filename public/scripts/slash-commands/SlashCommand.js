@@ -1,25 +1,24 @@
+import { hljs } from '../../lib.js';
+import { t } from '../i18n.js';
 import { SlashCommandAbortController } from './SlashCommandAbortController.js';
 import { SlashCommandArgument, SlashCommandNamedArgument } from './SlashCommandArgument.js';
 import { SlashCommandClosure } from './SlashCommandClosure.js';
-import { PARSER_FLAG } from './SlashCommandParser.js';
+import { SlashCommandDebugController } from './SlashCommandDebugController.js';
 import { SlashCommandScope } from './SlashCommandScope.js';
 
-
-
-
 /**
- * @typedef {{
+ * @typedef {NamedArgumentsCapture & {
  * _scope:SlashCommandScope,
- * _parserFlags:{[id:PARSER_FLAG]:boolean},
+ * _parserFlags:import('./SlashCommandParser.js').ParserFlags,
  * _abortController:SlashCommandAbortController,
+ * _debugController:SlashCommandDebugController,
  * _hasUnnamedArgument:boolean,
- * [id:string]:string|SlashCommandClosure,
  * }} NamedArguments
  */
 
 /**
  * Alternative object for local JSDocs, where you don't need existing pipe, scope, etc. arguments
- * @typedef {{[id:string]:string|SlashCommandClosure}} NamedArgumentsCapture
+ * @typedef {{[id:string]:string|SlashCommandClosure|(string|SlashCommandClosure)[]|undefined}} NamedArgumentsCapture
  */
 
 /**
@@ -36,6 +35,8 @@ export class SlashCommand {
      * @param {(namedArguments:NamedArguments|NamedArgumentsCapture, unnamedArguments:string|SlashCommandClosure|(string|SlashCommandClosure)[])=>string|SlashCommandClosure|Promise<string|SlashCommandClosure>} [props.callback]
      * @param {string} [props.helpString]
      * @param {boolean} [props.splitUnnamedArgument]
+     * @param {Number} [props.splitUnnamedArgumentCount]
+     * @param {boolean} [props.rawQuotes] If set to true, does not remove wrapping quotes from the unnamed argument.
      * @param {string[]} [props.aliases]
      * @param {string} [props.returns]
      * @param {SlashCommandNamedArgument[]} [props.namedArgumentList]
@@ -50,9 +51,11 @@ export class SlashCommand {
 
 
     /**@type {string}*/ name;
-    /**@type {(namedArguments:{_pipe:string|SlashCommandClosure, _scope:SlashCommandScope, _abortController:SlashCommandAbortController, [id:string]:string|SlashCommandClosure}, unnamedArguments:string|SlashCommandClosure|(string|SlashCommandClosure)[])=>string|SlashCommandClosure|Promise<string|SlashCommandClosure>}*/ callback;
+    /**@type {(namedArguments:NamedArguments, unnamedArguments:UnnamedArguments)=>string|SlashCommandClosure|Promise<string|SlashCommandClosure>}*/ callback;
     /**@type {string}*/ helpString;
     /**@type {boolean}*/ splitUnnamedArgument = false;
+    /**@type {Number}*/ splitUnnamedArgumentCount;
+    /** @type {boolean} */ rawQuotes = false;
     /**@type {string[]}*/ aliases = [];
     /**@type {string}*/ returns;
     /**@type {SlashCommandNamedArgument[]}*/ namedArgumentList = [];
@@ -60,6 +63,10 @@ export class SlashCommand {
 
     /**@type {Object.<string, HTMLElement>}*/ helpCache = {};
     /**@type {Object.<string, DocumentFragment>}*/ helpDetailsCache = {};
+
+    /**@type {boolean}*/ isExtension = false;
+    /**@type {boolean}*/ isThirdParty = false;
+    /**@type {string}*/ source;
 
     renderHelpItem(key = null) {
         key = key ?? this.name;
@@ -225,12 +232,44 @@ export class SlashCommand {
             const aliasList = [cmd.name, ...(cmd.aliases ?? [])].filter(it=>it != key);
             const specs = document.createElement('div'); {
                 specs.classList.add('specs');
-                const name = document.createElement('div'); {
-                    name.classList.add('name');
-                    name.classList.add('monospace');
-                    name.title = 'command name';
-                    name.textContent = `/${key}`;
-                    specs.append(name);
+                const head = document.createElement('div'); {
+                    head.classList.add('head');
+                    const name = document.createElement('div'); {
+                        name.classList.add('name');
+                        name.classList.add('monospace');
+                        name.title = t`Command name`;
+                        name.textContent = `/${key}`;
+                        head.append(name);
+                    }
+                    const src = document.createElement('div'); {
+                        src.classList.add('source');
+                        src.classList.add('fa-solid');
+                        if (this.isExtension) {
+                            src.classList.add('isExtension');
+                            src.classList.add('fa-cubes');
+                            if (this.isThirdParty) src.classList.add('isThirdParty');
+                            else src.classList.add('isCore');
+                        } else {
+                            src.classList.add('isCore');
+                            src.classList.add('fa-star-of-life');
+                        }
+                        src.title = [
+                            this.isExtension ? 'Extension' : 'Core',
+                            this.isThirdParty ? 'Third Party' : (this.isExtension ? 'Core' : null),
+                            this.source,
+                        ].filter(it=>it).join('\n');
+                        head.append(src);
+                    }
+                    if (this.rawQuotes) {
+                        const rawQuotes = document.createElement('div'); {
+                            rawQuotes.classList.add('rawQuotes');
+                            rawQuotes.classList.add('fa-solid');
+                            rawQuotes.classList.add('fa-quote-left');
+                            rawQuotes.title = t`Does not alter quoted literal unnamed arguments. Pass raw=false argument to override.`;
+                            head.append(rawQuotes);
+                        }
+                    }
+                    specs.append(head);
                 }
                 const body = document.createElement('div'); {
                     body.classList.add('body');
@@ -244,19 +283,19 @@ export class SlashCommand {
                                     const argItem = document.createElement('div'); {
                                         argItem.classList.add('argument');
                                         argItem.classList.add('namedArgument');
-                                        argItem.title = `${arg.isRequired ? '' : 'optional '}named argument`;
+                                        argItem.title = arg.isRequired ? t`Named argument` : t`Optional named argument`;
                                         if (!arg.isRequired || (arg.defaultValue ?? false)) argItem.classList.add('optional');
                                         if (arg.acceptsMultiple) argItem.classList.add('multiple');
                                         const name = document.createElement('span'); {
                                             name.classList.add('argument-name');
-                                            name.title = `${argItem.title} - name`;
+                                            name.title = t`${argItem.title} - Name`;
                                             name.textContent = arg.name;
                                             argItem.append(name);
                                         }
                                         if (arg.enumList.length > 0) {
                                             const enums = document.createElement('span'); {
                                                 enums.classList.add('argument-enums');
-                                                enums.title = `${argItem.title} - accepted values`;
+                                                enums.title = t`${argItem.title} - Accepted values`;
                                                 for (const e of arg.enumList) {
                                                     const enumItem = document.createElement('span'); {
                                                         enumItem.classList.add('argument-enum');
@@ -269,7 +308,7 @@ export class SlashCommand {
                                         } else {
                                             const types = document.createElement('span'); {
                                                 types.classList.add('argument-types');
-                                                types.title = `${argItem.title} - accepted types`;
+                                                types.title = t`${argItem.title} - Accepted types`;
                                                 for (const t of arg.typeList) {
                                                     const type = document.createElement('span'); {
                                                         type.classList.add('argument-type');
@@ -285,7 +324,7 @@ export class SlashCommand {
                                     if (arg.defaultValue !== null) {
                                         const argDefault = document.createElement('div'); {
                                             argDefault.classList.add('argument-default');
-                                            argDefault.title = 'default value';
+                                            argDefault.title = t`Default value`;
                                             argDefault.textContent = arg.defaultValue.toString();
                                             argSpec.append(argDefault);
                                         }
@@ -303,40 +342,52 @@ export class SlashCommand {
                         for (const arg of unnamedArguments) {
                             const listItem = document.createElement('li'); {
                                 listItem.classList.add('argumentItem');
-                                const argItem = document.createElement('div'); {
-                                    argItem.classList.add('argument');
-                                    argItem.classList.add('unnamedArgument');
-                                    argItem.title = `${arg.isRequired ? '' : 'optional '}unnamed argument`;
-                                    if (!arg.isRequired || (arg.defaultValue ?? false)) argItem.classList.add('optional');
-                                    if (arg.acceptsMultiple) argItem.classList.add('multiple');
-                                    if (arg.enumList.length > 0) {
-                                        const enums = document.createElement('span'); {
-                                            enums.classList.add('argument-enums');
-                                            enums.title = `${argItem.title} - accepted values`;
-                                            for (const e of arg.enumList) {
-                                                const enumItem = document.createElement('span'); {
-                                                    enumItem.classList.add('argument-enum');
-                                                    enumItem.textContent = e.value;
-                                                    enums.append(enumItem);
+                                const argSpec = document.createElement('div'); {
+                                    argSpec.classList.add('argumentSpec');
+                                    const argItem = document.createElement('div'); {
+                                        argItem.classList.add('argument');
+                                        argItem.classList.add('unnamedArgument');
+                                        argItem.title = arg.isRequired ? t`Unnamed argument` : t`Optional unnamed argument`;
+                                        if (!arg.isRequired || (arg.defaultValue ?? false)) argItem.classList.add('optional');
+                                        if (arg.acceptsMultiple) argItem.classList.add('multiple');
+                                        if (arg.enumList.length > 0) {
+                                            const enums = document.createElement('span'); {
+                                                enums.classList.add('argument-enums');
+                                                enums.title = t`${argItem.title} - Accepted values`;
+                                                for (const e of arg.enumList) {
+                                                    const enumItem = document.createElement('span'); {
+                                                        enumItem.classList.add('argument-enum');
+                                                        enumItem.textContent = e.value;
+                                                        enums.append(enumItem);
+                                                    }
                                                 }
+                                                argItem.append(enums);
                                             }
-                                            argItem.append(enums);
+                                        } else {
+                                            const types = document.createElement('span'); {
+                                                types.classList.add('argument-types');
+                                                types.title = t`${argItem.title} - Accepted types`;
+                                                for (const t of arg.typeList) {
+                                                    const type = document.createElement('span'); {
+                                                        type.classList.add('argument-type');
+                                                        type.textContent = t;
+                                                        types.append(type);
+                                                    }
+                                                }
+                                                argItem.append(types);
+                                            }
                                         }
-                                    } else {
-                                        const types = document.createElement('span'); {
-                                            types.classList.add('argument-types');
-                                            types.title = `${argItem.title} - accepted types`;
-                                            for (const t of arg.typeList) {
-                                                const type = document.createElement('span'); {
-                                                    type.classList.add('argument-type');
-                                                    type.textContent = t;
-                                                    types.append(type);
-                                                }
-                                            }
-                                            argItem.append(types);
+                                        argSpec.append(argItem);
+                                    }
+                                    if (arg.defaultValue !== null) {
+                                        const argDefault = document.createElement('div'); {
+                                            argDefault.classList.add('argument-default');
+                                            argDefault.title = t`Default value`;
+                                            argDefault.textContent = arg.defaultValue.toString();
+                                            argSpec.append(argDefault);
                                         }
                                     }
-                                    listItem.append(argItem);
+                                    listItem.append(argSpec);
                                 }
                                 const desc = document.createElement('div'); {
                                     desc.classList.add('argument-description');
@@ -350,7 +401,7 @@ export class SlashCommand {
                     }
                     const returns = document.createElement('span'); {
                         returns.classList.add('returns');
-                        returns.title = [null, undefined, 'void'].includes(returnType) ? 'command does not return anything' : 'return value';
+                        returns.title = [null, undefined, 'void'].includes(returnType) ? t`Command does not return anything` : t`Return value`;
                         returns.textContent = returnType ?? 'void';
                         body.append(returns);
                     }
@@ -363,7 +414,7 @@ export class SlashCommand {
                 help.innerHTML = helpString;
                 for (const code of help.querySelectorAll('pre > code')) {
                     code.classList.add('language-stscript');
-                    hljs.highlightElement(code);
+                    hljs.highlightElement(/**@type {HTMLElement}*/(code));
                 }
                 frag.append(help);
             }

@@ -1,5 +1,4 @@
 {
-    "system_prompt": "[System note: Write one reply only. Do not decide what {{user}} says or does. Write at least one paragraph, up to four. Be descriptive and immersive, providing vivid details about {{char}}'s actions, emotions, and the environment. Write with a high degree of complexity and burstiness. Do not repeat this message.]",
     "input_sequence": "### Instruction:\n#### {{name}}:",
     "output_sequence": "### Response:\n#### {{name}}:",
     "last_output_sequence": "### Response (2 paragraphs, engaging, natural, authentic, descriptive, creative):\n#### {{name}}:",
@@ -7,11 +6,8 @@
     "stop_sequence": "",
     "wrap": true,
     "macro": true,
-    "names": false,
-    "names_force_groups": false,
+    "names_behavior": "none",
     "activation_regex": "",
-    "system_sequence_prefix": "",
-    "system_sequence_suffix": "",
     "first_output_sequence": "",
     "skip_examples": false,
     "output_suffix": "",
@@ -20,5 +16,10 @@
     "user_alignment_message": "",
     "system_same_as_user": false,
     "last_system_sequence": "",
+    "first_input_sequence": "",
+    "last_input_sequence": "",
+    "sequences_as_stop_strings": true,
+    "story_string_prefix": "## {{char}}\n- You're \"{{char}}\" in this never-ending roleplay with \"{{user}}\".\n### Input:",
+    "story_string_suffix": "### Response:\n(OOC) Understood. I will take this info into account for the roleplay. (end OOC)\n",
     "name": "simple-proxy-for-tavern"
 }
